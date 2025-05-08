@@ -1,21 +1,35 @@
 #include <bits/stdc++.h>
+#include <cstddef>
 #include <vector>
 
-#define lb 8
-#define ls 2
+#define bucketSize 4
+#define bucketLength 12
+#define segLength 4
 
 using namespace std;
 using ull = unsigned long long;
+using ul = unsigned long int; // ":/"
 
-using fingerprint = unsigned char; // ":/"
-                                   //
 class Segment {
 public:
-  fingerprint buckets[1 << lb][1 << lb];
+  ul buckets[1UL << bucketLength][bucketSize];
+  Segment *overflow;
 };
 
-class BambooFilter {
+template <typename T> class BambooFilter {
 public:
-  vector<Segment> table;
+  // potencijalna optimizacija, incijaliziraj odmah fiksnu veličinu vektora
+  vector<Segment *> table;
+
+  BambooFilter<T>(size_t segmentLength)
+      : table(1UL << segmentLength, nullptr){};
+
+  bool bfInsert(T item) {}
+  bool bfLookUp(T item) {}
+  bool bfErase(T item) {}
+
+private:
+  void bfExpand() {}
+  void bfCompress() {}
 };
 int main() {}
