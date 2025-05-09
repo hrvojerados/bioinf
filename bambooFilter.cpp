@@ -18,18 +18,22 @@ public:
 
 template <typename T> class BambooFilter {
 public:
-  // potencijalna optimizacija, incijaliziraj odmah fiksnu veličinu vektora
   vector<Segment *> table;
 
   BambooFilter<T>(size_t segmentLength)
-      : table(1UL << segmentLength, nullptr){};
+      : table(1UL << segmentLength, nullptr), segmentLength(segmentLength){};
 
   bool bfInsert(T item) {}
   bool bfLookUp(T item) {}
   bool bfErase(T item) {}
 
 private:
-  void bfExpand() {}
+  int segmentLength;
+
+  void bfExpand() {
+    for (int i = 0; i < (1 << segmentLength); i++) {
+    }
+  }
   void bfCompress() {}
 };
 int main() {}
