@@ -10,6 +10,7 @@
 #define maxMisses 5
 #define expandConst 0.5
 #define compressConst 0.5
+#define N0 (1 << 4)
 using namespace std;
 using ull = unsigned long long;
 using ul = unsigned long int; 
@@ -28,22 +29,29 @@ template <typename T> class BambooFilter {
 public:
   vector<Segment*> table;
 
-  inline void getHashed(T item, ul &fingerprint, ul &bucketIndex, ul &segmentIndex) {
-    const hash<T> h;
-    fingerprint = (h(item) >> (bucketBitLength + segmentBitLength)) % (1UL << fingerprintBitLength); // mod unnecessary?
-    bucketIndex = h(item) % (1UL << bucketBitLength);
-    segmentIndex = (h(item) >> (bucketBitLength)) % (1UL << segmentBitLength);
-  }
-
   BambooFilter<T>(size_t segmentBitLength) 
     : table(1UL << segmentBitLength, nullptr),
     segmentBitLength(segmentBitLength),
     numOfOverflownSegs(0),
-    numOfEmptySegs(1<<segmentBitLength){};
+    numOfEmptySegs(1<<segmentBitLength),
+    roundInd(0),
+    nextSeg(0){};
+  
+  inline void getHashed(T item, ul &fingerprint, ul &bucketIndex, ul &segmentIndex) {
+    const hash<T> h;
+    fingerprint = (h(item) >> (32 - fingerprintBitLength)) % (1UL << fingerprintBitLength); // mod unnecessary?
+    bucketIndex = h(item) % (1UL << bucketBitLength);
+    segmentIndex = (h(item) >> bucketBitLength) % (1UL << (segmentBitLength + 1));
+    if (segmentIndex > table.size())
+      segmentIndex -= (1UL << (segmentBitLength));
+  }
 
   bool bfInsert(T item) {
     ul fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
+    return bfInsertHash(fingerprint, bucketIndex, segmentIndex);
+  }
+  bool bfInsertHash(ul fingerprint, ul bucketIndex, ul segmentIndex) {
 
     if (this->table[segmentIndex] == nullptr) {
       table[segmentIndex] = new Segment();
@@ -128,10 +136,14 @@ public:
     }
     return false;
   }
+  
   bool bfDelete(T item) {
     ul fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
+    return bfDeleteHash(fingerprint, bucketIndex, segmentIndex);
+  }
 
+  bool bfDeleteHash(ul fingerprint, ul bucketIndex, ul segmentIndex) {
     if (this->table[segmentIndex] == nullptr) {
       table[segmentIndex] = new Segment();
     }
@@ -193,7 +205,7 @@ public:
     for (ul i = 0; i < (1 << segmentBitLength); i++) {
       cout << "=============== " << i << "\n";
       for (ul j = 0; j < (1 << bucketBitLength); j++) {
-        if (table[i]->buckets[j].size() == 0)
+        if (table[i] == nullptr || table[i]->buckets[j].size() == 0)
           continue;
         cout << "------ " << j << "\n";
         for (ul f : table[i]->buckets[j]) {
@@ -204,7 +216,7 @@ public:
         for (ul f : table[i]->overflow[j]) {
           cout << f << " -> ";
         }
-        cout << "nullptr ";
+        cout << "nullptr\n";
       }
       cout << "===============\n";
     }
@@ -219,179 +231,87 @@ private:
   //number of empty segments (have no fingerprints stored inside)
   // used for determining whether to compress the bamboo filter 
   ul numOfEmptySegs;
-  //TODO numOfEmptySegs numOfOverflownSegs
-  void bfExpand() {
-    // we iterate over every segment and generate a new segment for each existing segment
-    // after creating each segment we shrink the fingerprints by one bit by dividing them by 2 and then we redistribute them
-    for (int i = 0; i < (1 << segmentBitLength); i++) {
-      Segment* newSeg = new Segment();
-      table.push_back(newSeg);
-      //initially, new segment is empty
-      numOfEmptySegs++;
-      Segment* seg = table[i];
-      //iterate over the buckets of current segment (i-th segment) 
-      for (int j = 0; j < (1 << bucketBitLength); j++) {
-        //we need to remember the figerprints that need to be deleted from the current (i-th) segment
-        vector<list<ul>::iterator> toDelete1;
+  //round of expansion
+  ul roundInd;
+  //next index to be split
+  ul nextSeg;
 
-        //now we iterate over the current (j-th) bucket
-        for (auto it = seg->buckets[j].begin();
-            it != seg->buckets[j].end();
-            it++) {
-          ul fingerprint = *it;
-          //we shrink the fingerprint
-          *it /= 2;
-          //if the shrunk bit is 1 place the fingerprint in the new segment
-          //otherwise it can stay where it is 
-          if (fingerprint % 2) {
-            //check if newSegment stoped being empty (was empty and now it obviously won't be)
-            if (newSeg->numOfElements == 0)
-              numOfEmptySegs--;
-            newSeg->numOfElements++;
-            newSeg->buckets[j].push_back(*it); 
-            toDelete1.push_back(it);
-            //we don't have to worry about overlowing newSeg since there aren't enough elements to do that YET
-          }
+  void bfExpand() {
+    table.push_back(new Segment());
+    Segment* seg = table[nextSeg];
+    
+    vector<list<ul>::iterator> toMoveFromBucket;
+    vector<list<ul>::iterator> toMoveFromOverflow;
+    vector<pair<list<ul>::iterator, ul>> toInsertAgain;
+    for (ul i = 0; i < (1 << bucketBitLength); i++) {
+      for (auto it = seg->buckets[i].begin();
+          it != seg->buckets[i].end();
+          it++) {
+        if ((*it << roundInd) % 2 == 1) {
+          toMoveFromBucket.push_back(it); 
         }
-        //now we delete the mentioned fingerprints
-        for (auto it : toDelete1) { 
-          seg->buckets[j].erase(it);
-          seg->numOfElements--;
+      }      
+      for (auto it = seg->overflow[i].begin();
+          it != seg->overflow[i].end();
+          it++) {
+        if ((*it << roundInd) % 2 == 1) {
+          toMoveFromOverflow.push_back(it); 
+        } else {
+          toInsertAgain.push_back({it, i});
         }
-        
-        //we have to do the same for the elements in the overflow but now be have to worry about overflowing newSeg
-        vector<list<ul>::iterator> toDelete2;
-        for (auto it = seg->overflow[j].begin();
-            it != seg->overflow[j].end();
-            it++) {
-          ul fingerprint = *it;
-          *it /= 2;
-          if (fingerprint % 2) {
-            //if newSeg was empty we have to adjust num of empty segments
-            if (newSeg->numOfElements == 0)
-              numOfEmptySegs--;
-            
-            //check if we will overflow newSeg
-            if (newSeg->buckets[j].size() < bucketSize)
-              //no overflow, add it in the bucket
-              newSeg->buckets[j].push_back(*it); 
-            else {
-              //overflow happend, add it to the overflow
-              //if it wasn't already overflown adjust numOfOverflownBuckets and numOfOverflownSegs
-              if (newSeg->numOfOverflownBuckets == 0)
-                numOfOverflownSegs++;
-              if (newSeg->overflow[j].size() == 0)
-                newSeg->numOfOverflownBuckets++;
-              newSeg->overflow[j].push_back(*it);
-              
-            }
-            newSeg->numOfElements++;
-            toDelete2.push_back(it);
-          }
-        } 
-        //newSeg is now done
-        //we turn out attention to seg
-        for (auto it : toDelete2) { 
-          seg->overflow[j].erase(it);
-          seg->numOfElements--;
-        }
-        //we now need to move elements from the overflow to the bucket
-        vector<list<ul>::iterator> toDelete3;
-        for (auto it = seg->overflow[j].begin();
-            it != seg->overflow[j].end();
-            it++) {
-          //if there's space in the bucket move the fingerprint to the bucket
-          if (seg->buckets[j].size() < bucketSize) {
-            seg->buckets[j].push_back(*it);
-            toDelete3.push_back(it);
-          } else {
-            //if there's no space in the bucket we can stop
-            break;
-          }
-        }
-  
-        for (auto it : toDelete3) {
-          seg->overflow[j].erase(it);
-        }
-        if (seg->overflow[j].size() == 0 && toDelete3.size() != 0){
-          seg->numOfOverflownBuckets--;
-          if (seg->numOfOverflownBuckets == 0)
-            numOfOverflownSegs--;
-        }
-        //and now seg is done too
       }
+      for (auto it : toMoveFromBucket) {
+        bfInsertHash(*it, i, table.size() - 1);
+        seg->buckets[i].erase(it);
+      }
+      for (auto it : toMoveFromOverflow) {
+        bfInsertHash(*it, i, table.size() - 1);
+        seg->overflow[i].erase(it);
+      }
+    } 
+    for (auto [it, i] : toInsertAgain) { 
+      seg->overflow[i].erase(it);
     }
-    //adjust segmentBitLength
-    segmentBitLength++;
+    for (auto [it, i] : toInsertAgain) { 
+      bfInsertHash(*it, i, table.size() - 1);
+    }
+
+    nextSeg++;
+    if (nextSeg == (1 << roundInd) * N0){
+      segmentBitLength++;
+      roundInd++;
+      nextSeg = 0;
+    }
+    return;
   }
   void bfCompress() {
-    //we iterate over the segments we want to remove (we iterate from the back)
-    //we have to also expand the fingerptints by multiplying them by 2 and also, depending in which segment they are add 1
-    for (ul i = (1 << segmentBitLength) - 1;
-        i >= (1 << (segmentBitLength - 1));
-        i--) {
-      //segmetn to be deleted
-      Segment* toDeleteSeg = table[i];
-      //segment that will stay and will store fingerprint of the deleted segment
-      Segment* toMergeSeg = table[i - (1 << (segmentBitLength - 1))];
-      //check if we are deleting an empty segment 
-      if (toDeleteSeg->numOfElements == 0)
-        numOfEmptySegs--;
-      //check if we are deleting an overflown segment (N.B. an empty segment certainly won't be overflown)
-      else if (toDeleteSeg->numOfOverflownBuckets != 0)
-        numOfOverflownSegs--;
-
-      //we need to expand the fingerprints in toMergeSeg
-      for (ul j = 0; j < (1 << bucketBitLength); j++) {
-        for (auto it = toMergeSeg->buckets[j].begin();
-            it != toMergeSeg->buckets[j].end();
-            it++) {
-          *it *= 2;
-        }
-        for (auto it = toMergeSeg->overflow[j].begin();
-            it != toMergeSeg->overflow[j].end();
-            it++) {
-          *it *= 2;
-        }
-
-        //now we need to move fingerprints from the segment that we will delete to toMergeSeg-
-
-        // is toMergeSeg- overflown (initially set to false) 
-        bool isOverflown = false;
-        // is toMergeSeg overflown right now  
-        const bool wasOverflown = (toMergeSeg->numOfOverflownBuckets != 0);
-        // is toMergeSeg empty right now
-        const bool wasEmpty = (toMergeSeg->numOfElements == 0);
-        for (auto it = toDeleteSeg->buckets[j].begin();
-            it != toDeleteSeg->buckets[j].end();
-            it++) {
-          //try to place it in the bucket and if not place it in the overflow
-          if (toMergeSeg->buckets[j].size() < bucketSize) {
-            //expend and add
-            toMergeSeg->buckets[j].push_back(*it * 2 + 1);
-            toMergeSeg->numOfElements++;
-          } else {
-            isOverflown = true;
-            if (toMergeSeg->overflow[j].size() == 0)
-              toMergeSeg->numOfOverflownBuckets++;
-            toMergeSeg->overflow[j].push_back(*it * 2 + 1);
-            toMergeSeg->numOfElements++;
-          }
-        }
-        // if we just overflew toMergeSeg- adjust numOfOverflownSegs 
-        if (!wasOverflown && isOverflown)
-          numOfOverflownSegs++;
-        // if toMergeSeg was empty adjust numOfEmptySeg
-        if (wasEmpty && (toMergeSeg->numOfElements != 0))
-          numOfEmptySegs--;
-
+    vector<list<ul>::iterator> toMove;
+    Segment* seg = table[table.size() - 1];
+    for (ul i = 0; i < (1 << bucketBitLength); i++) {
+      for (auto it = seg->buckets[i].begin();
+          it != seg->buckets[i].end();
+          it++) {
+        bfInsertHash(*it, i, table.size() - 1 - (1 << segmentBitLength));
       }
-      delete toDeleteSeg;
+      for (auto it = seg->overflow[i].begin();
+          it != seg->overflow[i].end();
+          it++) {
+        bfInsertHash(*it, i, table.size() - 1 - (1 << segmentBitLength));
+      }
     }
-    //adjust segmentBitLength
-    segmentBitLength--;
-    table.resize(1 << (segmentBitLength));
+    delete seg;
+    table.resize(table.size() - 1);
+
+    if (nextSeg == 0) {
+      segmentBitLength--;
+      roundInd--;
+      nextSeg = (1 << roundInd) - 1;
+    } else {
+      nextSeg--;
+    }
+    return;
   }
+
 };
 int main() {
   BambooFilter<string> *bfTest = new BambooFilter<string>(4);
@@ -399,8 +319,6 @@ int main() {
 
   result = bfTest->bfInsert("HelloWorldi");
   result = bfTest->bfInsert("HelloWorld");
-  result = bfTest->bfLookUp("HelloWorld");
-  result = bfTest->bfDelete("HelloWorldj");
-  result = bfTest->bfLookUp("HelloWorldj");
+  result = bfTest->bfInsert("HelloWorldj");
   bfTest->printBambooFilter();
 }
