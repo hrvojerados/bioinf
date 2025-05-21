@@ -77,8 +77,6 @@ public:
         if (it == seg->buckets[altBucketIndex].end()) {
           seg->buckets[altBucketIndex].push_back(fingerprint);
           //if we have too many overflown segments (condition) then we have to expand the table
-          if (numOfOverflownSegs > expandConst * (1UL << segmentBitLength))
-            bfExpand();
           return true;
         }
       }
@@ -91,17 +89,20 @@ public:
 
       it = seg->buckets[altBucketIndex].begin();
       for ( int i = 0; i<rnd; i++, it++);
+      newfingerprint = *it;
       *it = fingerprint;
-      bucketIndex = altBucketIndex;
       fingerprint = newfingerprint;
+      bucketIndex = altBucketIndex;
     }
     if (seg->numOfOverflownBuckets == 0) {
       numOfOverflownSegs++;
     }
-    seg->numOfOverflownBuckets++;
+    if (seg->overflow[bucketIndex].size() == 0) {
+      seg->numOfOverflownBuckets++;
+    }
     seg->overflow[bucketIndex].push_back(fingerprint);
     //if we have too many overflown segments (condition) then we have to expand the table
-    if (numOfOverflownSegs > expandConst * (1UL << segmentBitLength))
+    if (numOfOverflownSegs > expandConst * (N0 * (1UL << roundInd) + nextSeg))
       bfExpand();
 
     return true;
@@ -132,6 +133,10 @@ public:
       if (f == fingerprint)
         return true;
     }
+    for (ul f : seg->overflow[altBucketIndex]) {
+      if (f == fingerprint)
+        return true;
+    }
     return false;
   }
   
@@ -143,12 +148,47 @@ public:
 
   bool bfDeleteHash(ul fingerprint, ul bucketIndex, ul segmentIndex) {
     if (this->table[segmentIndex] == nullptr) {
-      table[segmentIndex] = new Segment();
+      return false;
     }
     Segment *seg = this->table[segmentIndex];
-    seg->numOfElements--;
-    if (seg->numOfElements == 0)
-      numOfEmptySegs++;
+
+    for (auto it = seg->overflow[bucketIndex].begin();
+        it != seg->overflow[bucketIndex].end();
+        it++) {
+      if (*it == fingerprint) {
+        seg->overflow[bucketIndex].erase(it);
+        if (seg->overflow[bucketIndex].size() == 0) {
+          seg->numOfOverflownBuckets--;
+        }
+        if (seg->numOfOverflownBuckets == 0) {
+          numOfOverflownSegs--;
+        }
+        //if we have too many empty segments (condition) then we have to compress the table
+        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
+          bfCompress();  
+        }
+        return true;
+      }
+    }
+    ul altBucketIndex = (bucketIndex ^ fingerprint) % (1UL << bucketBitLength);
+    for (auto it = seg->overflow[altBucketIndex].begin();
+        it != seg->overflow[altBucketIndex].end();
+        it++) {
+      if (*it == fingerprint) {
+        seg->overflow[altBucketIndex].erase(it);
+        if (seg->overflow[altBucketIndex].size() == 0) {
+          seg->numOfOverflownBuckets--;
+        }
+        if (seg->numOfOverflownBuckets == 0) {
+          numOfOverflownSegs--;
+        }
+        //if we have too many empty segments (condition) then we have to compress the table
+        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
+          bfCompress();  
+        }
+        return true;
+      }
+    }
 
     for (auto it = seg->buckets[bucketIndex].begin();
         it != seg->buckets[bucketIndex].end();
@@ -156,35 +196,25 @@ public:
       if (*it == fingerprint) {
         seg->buckets[bucketIndex].erase(it);
         //if we have too many empty segments (condition) then we have to compress the table
-        if (numOfEmptySegs > compressConst * (1UL << segmentBitLength)) {
+        seg->numOfElements--;
+        if (seg->numOfElements == 0)
+          numOfEmptySegs++;
+        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
           bfCompress();  
         }
         return true;
       }
     }
-    int altBucketIndex = (bucketIndex ^ fingerprint) % (1UL << bucketBitLength);
     for (auto it = seg->buckets[altBucketIndex].begin();
         it != seg->buckets[altBucketIndex].end();
         it++) {
       if (*it == fingerprint) {
         seg->buckets[altBucketIndex].erase(it);
+        seg->numOfElements--;
+        if (seg->numOfElements == 0)
+          numOfEmptySegs++;
         //if we have too many empty segments (condition) then we have to compress the table
-        if (numOfEmptySegs > compressConst * (1UL << segmentBitLength)) {
-          bfCompress();  
-        }
-        return true;
-      }
-    }
-    for (auto it = seg->overflow[bucketIndex].begin();
-        it != seg->overflow[bucketIndex].end();
-        it++) {
-      if (*it == fingerprint) {
-        seg->overflow[bucketIndex].erase(it);
-        seg->numOfOverflownBuckets--;
-        if (seg->numOfOverflownBuckets == 0)
-          numOfOverflownSegs--;
-        //if we have too many empty segments (condition) then we have to compress the table
-        if (numOfEmptySegs > compressConst * (1UL << segmentBitLength)) {
+        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
           bfCompress();  
         }
         return true;
@@ -245,33 +275,40 @@ private:
       for (auto it = seg->buckets[i].begin();
           it != seg->buckets[i].end();
           it++) {
-        if ((*it << roundInd) % 2 == 1) {
+        if ((*it >> roundInd) % 2 == 1) {
           toMoveFromBucket.push_back(it); 
         }
       }      
       for (auto it = seg->overflow[i].begin();
           it != seg->overflow[i].end();
           it++) {
-        if ((*it << roundInd) % 2 == 1) {
+        if ((*it >> roundInd) % 2 == 1) {
           toMoveFromOverflow.push_back(it); 
         } else {
           toInsertAgain.push_back({it, i});
         }
       }
-      for (auto it : toMoveFromBucket) {
-        bfInsertHash(*it, i, table.size() - 1);
-        seg->buckets[i].erase(it);
-      }
       for (auto it : toMoveFromOverflow) {
         bfInsertHash(*it, i, table.size() - 1);
-        seg->overflow[i].erase(it);
+        ///seg->overflow[i].erase(it);
       }
-    } 
-    for (auto [it, i] : toInsertAgain) { 
-      seg->overflow[i].erase(it);
+      for (auto it : toMoveFromOverflow) {
+        bfDeleteHash(*it, i, nextSeg);
+        ///seg->overflow[i].erase(it);
+      }
+      for (auto it : toMoveFromBucket) {
+        bfInsertHash(*it, i, table.size() - 1);
+      }
+      for (auto it : toMoveFromBucket) {
+        bfDeleteHash(*it, i, nextSeg);
+      }
+    }
+    for (auto [it, i] : toInsertAgain) {
+      bfDeleteHash(*it, i, nextSeg);
+      //seg->overflow[i].erase(it);
     }
     for (auto [it, i] : toInsertAgain) { 
-      bfInsertHash(*it, i, table.size() - 1);
+      bfInsertHash(*it, i, nextSeg);
     }
 
     nextSeg++;
@@ -288,12 +325,12 @@ private:
       for (auto it = seg->buckets[i].begin();
           it != seg->buckets[i].end();
           it++) {
-        bfInsertHash(*it, i, table.size() - 1 - (1 << segmentBitLength));
+        bfInsertHash(*it, i, table.size() - 1 - (1 << (segmentBitLength - 1)));
       }
       for (auto it = seg->overflow[i].begin();
           it != seg->overflow[i].end();
           it++) {
-        bfInsertHash(*it, i, table.size() - 1 - (1 << segmentBitLength));
+        bfInsertHash(*it, i, table.size() - 1 - (1 << (segmentBitLength - 1)));
       }
     }
     delete seg;
