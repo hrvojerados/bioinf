@@ -7,9 +7,9 @@
 #define bucketSize 4
 #define bucketBitLength 12
 #define fingerprintBitLength 16
-#define maxMisses 5
-#define expandConst 0.5
-#define compressConst 0.5
+#define maxMisses 500
+#define expandConst 0.6
+#define compressConst 0.4
 #define N0 (1 << 4)
 using namespace std;
 using ull = unsigned long long;
@@ -62,12 +62,10 @@ public:
     seg->numOfElements++;
     // check if there's room in the first bucket, if yes great :D
     list<ul>::iterator it = seg->buckets[bucketIndex].begin();
-    for (int i = 0; i < bucketSize; i++) {
+    for (int i = 0; i < bucketSize; i++, it++) {
       if (it == seg->buckets[bucketIndex].end()) {
         seg->buckets[bucketIndex].push_back(fingerprint);
         //if we have too many overflown segments (condition) then we have to expand the table
-        if (numOfOverflownSegs > expandConst * (1UL << segmentBitLength))
-          bfExpand();
         return true;
       }
     }
@@ -75,7 +73,7 @@ public:
     for (int i = 1; i < maxMisses; i++) {
       int altBucketIndex = (bucketIndex ^ fingerprint) % (1UL << bucketBitLength);
       list<ul>::iterator it = seg->buckets[altBucketIndex].begin();
-      for (int j = 0; j < bucketSize; j++) {
+      for (int j = 0; j < bucketSize; j++, it++) {
         if (it == seg->buckets[altBucketIndex].end()) {
           seg->buckets[altBucketIndex].push_back(fingerprint);
           //if we have too many overflown segments (condition) then we have to expand the table
@@ -285,7 +283,6 @@ private:
     return;
   }
   void bfCompress() {
-    vector<list<ul>::iterator> toMove;
     Segment* seg = table[table.size() - 1];
     for (ul i = 0; i < (1 << bucketBitLength); i++) {
       for (auto it = seg->buckets[i].begin();
