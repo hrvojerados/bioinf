@@ -4,13 +4,17 @@
 #include <type_traits>
 #include <vector>
 
+#include "common/random.h"
+#include "common/timing.h"
+
 #define bucketSize 4
 #define bucketBitLength 12
 #define fingerprintBitLength 16
-#define maxMisses 500
-#define expandConst 0.6
+#define maxMisses 8
+#define expandConst 0.3
 #define compressConst 0.4
-#define N0 (1 << 4)
+#define N0 (1 << 12)
+
 using namespace std;
 using ull = unsigned long long;
 using ul = unsigned long int; 
@@ -42,7 +46,7 @@ public:
     fingerprint = (h(item) >> (32 - fingerprintBitLength)) % (1UL << fingerprintBitLength); // mod unnecessary?
     bucketIndex = h(item) % (1UL << bucketBitLength);
     segmentIndex = (h(item) >> bucketBitLength) % (1UL << (segmentBitLength + 1));
-    if (segmentIndex > table.size())
+    if (segmentIndex >= table.size())
       segmentIndex -= (1UL << (segmentBitLength));
   }
 
@@ -320,6 +324,9 @@ private:
     return;
   }
   void bfCompress() {
+    if (table.size() == N0) {
+      return;
+    }
     Segment* seg = table[table.size() - 1];
     for (ul i = 0; i < (1 << bucketBitLength); i++) {
       for (auto it = seg->buckets[i].begin();
@@ -350,9 +357,40 @@ private:
 int main() {
   BambooFilter<string> *bfTest = new BambooFilter<string>(4);
   bool result;
+  //for (ull i = 0; i < 1e2; i++)
+  //  result = bfTest->bfInsert("HelloWorldi");
+  //result = bfTest->bfInsert("HelloWorld");
+  //result = bfTest->bfInsert("HelloWorldj");
+  //bfTest->printBambooFilter();
+    size_t add_count = 65536;
 
-  result = bfTest->bfInsert("HelloWorldi");
-  result = bfTest->bfInsert("HelloWorld");
-  result = bfTest->bfInsert("HelloWorldj");
-  bfTest->printBambooFilter();
+    cout << "Prepare..." << endl;
+
+    vector<string> to_add, to_lookup;
+    GenerateRandom64(add_count, to_add, to_lookup);
+
+    cout << "Begin test" << endl;
+
+    BambooFilter<string> *bbf = new BambooFilter<string>(N0);
+
+    auto start_time = NowNanos();
+
+    for (uint64_t added = 0; added < add_count; added++)
+    {
+        bbf->bfInsert(to_add[added].c_str());
+    }
+
+    cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
+
+    start_time = NowNanos();
+    for (uint64_t added = 0; added < add_count; added++)
+    {
+        if (!bbf->bfLookUp(to_add[added].c_str()))
+        {
+            throw logic_error("False Negative");
+        }
+    }
+    cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
+
+    return 0;
 }
