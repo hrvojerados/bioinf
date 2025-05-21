@@ -15,17 +15,21 @@
 #define compressConst 0.4
 #define N0 (1 << 12)
 
+#define k1 (20 * (1 << bucketBitLength))
+#define k2 (2 * bucketSize * (1 << bucketBitLength))
+
 using namespace std;
 using ull = unsigned long long;
 using ul = unsigned long int; 
 
 class Segment {
 public:
-  ul numOfOverflownBuckets;
-  ul numOfElements;
+//  ul numOfOverflownBuckets;
+//  ul numOfElements;
   list<ul> buckets[1UL << bucketBitLength]; 
   list<ul> overflow[1UL << bucketBitLength];
-  Segment() : numOfOverflownBuckets(0), numOfElements(0) {};
+//  Segment() : numOfOverflownBuckets(0), numOfElements(0) {};
+  Segment() = default;
   ~Segment() = default;
 };
 
@@ -36,8 +40,7 @@ public:
   BambooFilter<T>(size_t segmentBitLength) 
     : table(1UL << segmentBitLength, nullptr),
     segmentBitLength(segmentBitLength),
-    numOfOverflownSegs(0),
-    numOfEmptySegs(1<<segmentBitLength),
+    numOfItems(0),
     roundInd(0),
     nextSeg(0){};
   
@@ -56,14 +59,11 @@ public:
     return bfInsertHash(fingerprint, bucketIndex, segmentIndex);
   }
   bool bfInsertHash(ul fingerprint, ul bucketIndex, ul segmentIndex) {
-
+    numOfItems++;
     if (this->table[segmentIndex] == nullptr) {
       table[segmentIndex] = new Segment();
     }
     Segment *seg = this->table[segmentIndex];
-    if (seg->numOfElements == 0)
-      numOfEmptySegs--;
-    seg->numOfElements++;
     // check if there's room in the first bucket, if yes great :D
     list<ul>::iterator it = seg->buckets[bucketIndex].begin();
     for (int i = 0; i < bucketSize; i++, it++) {
@@ -80,7 +80,6 @@ public:
       for (int j = 0; j < bucketSize; j++, it++) {
         if (it == seg->buckets[altBucketIndex].end()) {
           seg->buckets[altBucketIndex].push_back(fingerprint);
-          //if we have too many overflown segments (condition) then we have to expand the table
           return true;
         }
       }
@@ -98,16 +97,11 @@ public:
       fingerprint = newfingerprint;
       bucketIndex = altBucketIndex;
     }
-    if (seg->numOfOverflownBuckets == 0) {
-      numOfOverflownSegs++;
-    }
-    if (seg->overflow[bucketIndex].size() == 0) {
-      seg->numOfOverflownBuckets++;
-    }
     seg->overflow[bucketIndex].push_back(fingerprint);
-    //if we have too many overflown segments (condition) then we have to expand the table
-    if (numOfOverflownSegs > expandConst * (N0 * (1UL << roundInd) + nextSeg))
+    //expand condition
+    if (numOfItems % k1 == 0) {
       bfExpand();
+    }
 
     return true;
   }
@@ -161,14 +155,8 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->overflow[bucketIndex].erase(it);
-        if (seg->overflow[bucketIndex].size() == 0) {
-          seg->numOfOverflownBuckets--;
-        }
-        if (seg->numOfOverflownBuckets == 0) {
-          numOfOverflownSegs--;
-        }
-        //if we have too many empty segments (condition) then we have to compress the table
-        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
+        //compress condition
+        if (numOfItems % k2 == 0) {
           bfCompress();  
         }
         return true;
@@ -180,14 +168,8 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->overflow[altBucketIndex].erase(it);
-        if (seg->overflow[altBucketIndex].size() == 0) {
-          seg->numOfOverflownBuckets--;
-        }
-        if (seg->numOfOverflownBuckets == 0) {
-          numOfOverflownSegs--;
-        }
-        //if we have too many empty segments (condition) then we have to compress the table
-        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
+        //compress condition
+        if (numOfItems % k2 == 0) {
           bfCompress();  
         }
         return true;
@@ -199,11 +181,8 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->buckets[bucketIndex].erase(it);
-        //if we have too many empty segments (condition) then we have to compress the table
-        seg->numOfElements--;
-        if (seg->numOfElements == 0)
-          numOfEmptySegs++;
-        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
+        //compress condition
+        if (numOfItems % k2 == 0) {
           bfCompress();  
         }
         return true;
@@ -214,11 +193,8 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->buckets[altBucketIndex].erase(it);
-        seg->numOfElements--;
-        if (seg->numOfElements == 0)
-          numOfEmptySegs++;
-        //if we have too many empty segments (condition) then we have to compress the table
-        if (numOfEmptySegs > compressConst * (N0 * (1UL << roundInd) + nextSeg)) {
+        //compress condition
+        if (numOfItems % k2 == 0) {
           bfCompress();  
         }
         return true;
@@ -230,8 +206,6 @@ public:
 
   void printBambooFilter() {
     cout << "BAMBOO FILTER\n";
-    cout << "Number of empty segments: " << numOfEmptySegs << "\n";
-    cout << "Number of overflown segments: " << numOfOverflownSegs << "\n";
     cout << "Number of bits reserved for number of segments: " << segmentBitLength << "\n";
 
     for (ul i = 0; i < (1 << segmentBitLength); i++) {
@@ -255,14 +229,15 @@ public:
   }
 
 private:
+  ul numOfItems;
   ul segmentBitLength; 
   //bits (of the hash) reserved for segment enumeration
   // number of segments that have at least one item's fingerprint stored in it's overflow part
   // used for determining whether to expand the bamboo filter 
-  ul numOfOverflownSegs; 
+  //ul numOfOverflownSegs; 
   //number of empty segments (have no fingerprints stored inside)
   // used for determining whether to compress the bamboo filter 
-  ul numOfEmptySegs;
+  //ul numOfEmptySegs;
   //round of expansion
   ul roundInd;
   //next index to be split
@@ -362,7 +337,7 @@ int main() {
   //result = bfTest->bfInsert("HelloWorld");
   //result = bfTest->bfInsert("HelloWorldj");
   //bfTest->printBambooFilter();
-    size_t add_count = 65536;
+    size_t add_count = 65500;
 
     cout << "Prepare..." << endl;
 
