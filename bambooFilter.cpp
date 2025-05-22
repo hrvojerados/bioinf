@@ -1,5 +1,6 @@
 #include <bits/stdc++.h>
 #include <cstddef>
+#include <cstdio>
 #include <iostream>
 #include <type_traits>
 #include <vector>
@@ -8,26 +9,26 @@
 #include "common/timing.h"
 
 #define bucketSize 4
-#define bucketBitLength 12
+#define bucketBitLength 10
 #define fingerprintBitLength 16
-#define maxMisses 8
-#define expandConst 0.3
-#define compressConst 0.4
-#define N0 (1 << 12)
+#define maxMisses 8 // sto je vece to je bolji lookup, ali je stoga sporiji insert
+#define initialSegBitLength 6
+#define N0 (1 << initialSegBitLength)
 
-#define k1 (20 * (1 << bucketBitLength))
+#define k1 (1 << (bucketBitLength))
 #define k2 (2 * bucketSize * (1 << bucketBitLength))
+
 
 using namespace std;
 using ull = unsigned long long;
-using ul = unsigned long int; 
+using u = unsigned int; 
 
 class Segment {
 public:
 //  ul numOfOverflownBuckets;
 //  ul numOfElements;
-  list<ul> buckets[1UL << bucketBitLength]; 
-  list<ul> overflow[1UL << bucketBitLength];
+  list<u> buckets[1U << bucketBitLength]; 
+  list<u> overflow[1U << bucketBitLength];
 //  Segment() : numOfOverflownBuckets(0), numOfElements(0) {};
   Segment() = default;
   ~Segment() = default;
@@ -38,34 +39,43 @@ public:
   vector<Segment*> table;
 
   BambooFilter<T>(size_t segmentBitLength) 
-    : table(1UL << segmentBitLength, nullptr),
+    : table(1U << segmentBitLength, nullptr),
     segmentBitLength(segmentBitLength),
     numOfItems(0),
     roundInd(0),
-    nextSeg(0){};
+    nextSeg(0){
+      for (u i = 0; i < (1U << segmentBitLength); i++) {
+        table[i] = new Segment();
+      }
+    };
   
-  inline void getHashed(T item, ul &fingerprint, ul &bucketIndex, ul &segmentIndex) {
+  inline void getHashed(T item, u &fingerprint, u &bucketIndex, u &segmentIndex) {
     const hash<T> h;
-    fingerprint = (h(item) >> (32 - fingerprintBitLength)) % (1UL << fingerprintBitLength); // mod unnecessary?
-    bucketIndex = h(item) % (1UL << bucketBitLength);
-    segmentIndex = (h(item) >> bucketBitLength) % (1UL << (segmentBitLength + 1));
-    if (segmentIndex >= table.size())
-      segmentIndex -= (1UL << (segmentBitLength));
+    u hash = h(item);
+    /*
+    fingerprint = (hash >> (32 - fingerprintBitLength));
+    bucketIndex = hash & ((1L< bucketBitLength) - 1);
+    segmentIndex = (hash >> bucketBitLength) & ((1U<< (segmentBitLength + 1)) - 1);
+    */
+    //printf("%x\n", hash);
+    fingerprint = (hash >> (32 - fingerprintBitLength)); // mod unnecessary?
+    bucketIndex = hash & ((1U << bucketBitLength) - 1);
+    segmentIndex = (hash >> bucketBitLength) & ((1U << segmentBitLength) - 1);
+    //printf("fingerptint: %x bucketIndex: %x segmentIndex: %x segmentBitLength: %d \n", fingerprint, bucketIndex, segmentIndex, segmentBitLength);
+    //if (segmentIndex >= table.size())
+    //  segmentIndex -= (1U << (segmentBitLength));
   }
 
   bool bfInsert(T item) {
-    ul fingerprint, bucketIndex, segmentIndex;
+    u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
     return bfInsertHash(fingerprint, bucketIndex, segmentIndex);
   }
-  bool bfInsertHash(ul fingerprint, ul bucketIndex, ul segmentIndex) {
+  bool bfInsertHash(u fingerprint, u bucketIndex, u segmentIndex) {
     numOfItems++;
-    if (this->table[segmentIndex] == nullptr) {
-      table[segmentIndex] = new Segment();
-    }
     Segment *seg = this->table[segmentIndex];
     // check if there's room in the first bucket, if yes great :D
-    list<ul>::iterator it = seg->buckets[bucketIndex].begin();
+    list<u>::iterator it = seg->buckets[bucketIndex].begin();
     for (int i = 0; i < bucketSize; i++, it++) {
       if (it == seg->buckets[bucketIndex].end()) {
         seg->buckets[bucketIndex].push_back(fingerprint);
@@ -75,8 +85,8 @@ public:
     }
     // if there's no room check the alternative bucket!
     for (int i = 1; i < maxMisses; i++) {
-      int altBucketIndex = (bucketIndex ^ fingerprint) % (1UL << bucketBitLength);
-      list<ul>::iterator it = seg->buckets[altBucketIndex].begin();
+      int altBucketIndex = (bucketIndex ^ fingerprint) % (1U << bucketBitLength);
+      list<u>::iterator it = seg->buckets[altBucketIndex].begin();
       for (int j = 0; j < bucketSize; j++, it++) {
         if (it == seg->buckets[altBucketIndex].end()) {
           seg->buckets[altBucketIndex].push_back(fingerprint);
@@ -88,7 +98,7 @@ public:
       // fingerprint altbucket is now the main bucket (one that we already checked)
       // new alt bucket is calculated in the next loop iteration
       int rnd = fingerprint >> (fingerprintBitLength - 2);
-      ul newfingerprint;
+      u newfingerprint;
 
       it = seg->buckets[altBucketIndex].begin();
       for ( int i = 0; i<rnd; i++, it++);
@@ -105,33 +115,30 @@ public:
 
     return true;
   }
-  bool bfLookUp(T item) {
-    ul fingerprint, bucketIndex, segmentIndex;
+  inline bool bfLookUp(T item) {
+    u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
 
-    if (this->table[segmentIndex] == nullptr) {
-      return false;
-    }
     Segment *seg = this->table[segmentIndex];
 
-    for (ul f : seg->buckets[bucketIndex]) {
+    for (u f : seg->buckets[bucketIndex]) {
       if (f == fingerprint) {
         return true;
       }
     }
 
-    int altBucketIndex = (bucketIndex ^ fingerprint) % (1UL << bucketBitLength);
-    for (ul f : seg->buckets[altBucketIndex]) {
+    int altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
+    for (u f : seg->buckets[altBucketIndex]) {
       if (f == fingerprint) {
         return true;
       }
     }
 
-    for (ul f : seg->overflow[bucketIndex]) {
+    for (u f : seg->overflow[bucketIndex]) {
       if (f == fingerprint)
         return true;
     }
-    for (ul f : seg->overflow[altBucketIndex]) {
+    for (u f : seg->overflow[altBucketIndex]) {
       if (f == fingerprint)
         return true;
     }
@@ -139,12 +146,12 @@ public:
   }
   
   bool bfDelete(T item) {
-    ul fingerprint, bucketIndex, segmentIndex;
+    u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
     return bfDeleteHash(fingerprint, bucketIndex, segmentIndex);
   }
 
-  bool bfDeleteHash(ul fingerprint, ul bucketIndex, ul segmentIndex) {
+  bool bfDeleteHash(u fingerprint, u bucketIndex, u segmentIndex) {
     if (this->table[segmentIndex] == nullptr) {
       return false;
     }
@@ -162,7 +169,7 @@ public:
         return true;
       }
     }
-    ul altBucketIndex = (bucketIndex ^ fingerprint) % (1UL << bucketBitLength);
+    u altBucketIndex = (bucketIndex ^ fingerprint) % (1U << bucketBitLength);
     for (auto it = seg->overflow[altBucketIndex].begin();
         it != seg->overflow[altBucketIndex].end();
         it++) {
@@ -208,18 +215,18 @@ public:
     cout << "BAMBOO FILTER\n";
     cout << "Number of bits reserved for number of segments: " << segmentBitLength << "\n";
 
-    for (ul i = 0; i < (1 << segmentBitLength); i++) {
+    for (u i = 0; i < (1 << segmentBitLength); i++) {
       cout << "=============== " << i << "\n";
-      for (ul j = 0; j < (1 << bucketBitLength); j++) {
+      for (u j = 0; j < (1 << bucketBitLength); j++) {
         if (table[i] == nullptr || table[i]->buckets[j].size() == 0)
           continue;
         cout << "------ " << j << "\n";
-        for (ul f : table[i]->buckets[j]) {
+        for (u f : table[i]->buckets[j]) {
           cout << f << " -> ";
         }
         cout << "nullptr ";
         cout << "overflow: ";
-        for (ul f : table[i]->overflow[j]) {
+        for (u f : table[i]->overflow[j]) {
           cout << f << " -> ";
         }
         cout << "nullptr\n";
@@ -229,8 +236,8 @@ public:
   }
 
 private:
-  ul numOfItems;
-  ul segmentBitLength; 
+  u numOfItems;
+  u segmentBitLength; 
   //bits (of the hash) reserved for segment enumeration
   // number of segments that have at least one item's fingerprint stored in it's overflow part
   // used for determining whether to expand the bamboo filter 
@@ -239,18 +246,18 @@ private:
   // used for determining whether to compress the bamboo filter 
   //ul numOfEmptySegs;
   //round of expansion
-  ul roundInd;
+  u roundInd;
   //next index to be split
-  ul nextSeg;
+  u nextSeg;
 
   void bfExpand() {
     table.push_back(new Segment());
     Segment* seg = table[nextSeg];
     
-    vector<list<ul>::iterator> toMoveFromBucket;
-    vector<list<ul>::iterator> toMoveFromOverflow;
-    vector<pair<list<ul>::iterator, ul>> toInsertAgain;
-    for (ul i = 0; i < (1 << bucketBitLength); i++) {
+    vector<list<u>::iterator> toMoveFromBucket;
+    vector<list<u>::iterator> toMoveFromOverflow;
+    vector<pair<list<u>::iterator, u>> toInsertAgain;
+    for (u i = 0; i < (1 << bucketBitLength); i++) {
       for (auto it = seg->buckets[i].begin();
           it != seg->buckets[i].end();
           it++) {
@@ -291,7 +298,7 @@ private:
     }
 
     nextSeg++;
-    if (nextSeg == (1 << roundInd) * N0){
+    if (nextSeg == (1U << roundInd) * N0){
       segmentBitLength++;
       roundInd++;
       nextSeg = 0;
@@ -303,16 +310,16 @@ private:
       return;
     }
     Segment* seg = table[table.size() - 1];
-    for (ul i = 0; i < (1 << bucketBitLength); i++) {
+    for (u i = 0; i < (1 << bucketBitLength); i++) {
       for (auto it = seg->buckets[i].begin();
           it != seg->buckets[i].end();
           it++) {
-        bfInsertHash(*it, i, table.size() - 1 - (1 << (segmentBitLength - 1)));
+        bfInsertHash(*it, i, table.size() - 1 - (1U << (segmentBitLength - 1)));
       }
       for (auto it = seg->overflow[i].begin();
           it != seg->overflow[i].end();
           it++) {
-        bfInsertHash(*it, i, table.size() - 1 - (1 << (segmentBitLength - 1)));
+        bfInsertHash(*it, i, table.size() - 1 - (1U << (segmentBitLength - 1)));
       }
     }
     delete seg;
@@ -346,7 +353,7 @@ int main() {
 
     cout << "Begin test" << endl;
 
-    BambooFilter<string> *bbf = new BambooFilter<string>(N0);
+    BambooFilter<string> *bbf = new BambooFilter<string>(initialSegBitLength);
 
     auto start_time = NowNanos();
 
@@ -354,9 +361,8 @@ int main() {
     {
         bbf->bfInsert(to_add[added].c_str());
     }
-
     cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
-
+    //bbf->printBambooFilter();
     start_time = NowNanos();
     for (uint64_t added = 0; added < add_count; added++)
     {
