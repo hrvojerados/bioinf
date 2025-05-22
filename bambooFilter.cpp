@@ -3,7 +3,8 @@
 #include <cstdio>
 #include <iostream>
 #include <type_traits>
-#include <vector>
+#include <fstream>
+#include <iostream>
 
 #include "common/random.h"
 #include "common/timing.h"
@@ -15,7 +16,7 @@
 #define initialSegBitLength 6
 #define N0 (1 << initialSegBitLength)
 
-#define k1 (1 << (bucketBitLength))
+#define k1 (8 * 1 << (bucketBitLength))
 #define k2 (2 * bucketSize * (1 << bucketBitLength))
 
 
@@ -230,6 +231,42 @@ public:
     cout << "Number Of Items: " << numOfItems << "\n";
     cout << "Expansion const: " << nextSeg << "\n";
   }
+  void printBambooFilterToFile(const string& filename = "output.txt") {
+    ofstream ofs(filename);
+    if (!ofs) {
+        cerr << "Error: could not open file " << filename << " for writing.\n";
+        return;
+    }
+
+    ofs << "BAMBOO FILTER\n";
+    ofs << "Number of bits reserved for number of segments: "
+        << segmentBitLength << "\n";
+
+    for (u i = 0; i < table.size(); i++) {
+        ofs << "=============== " << i << "\n";
+        for (u j = 0; j < (1u << bucketBitLength); j++) {
+            if (table[i] == nullptr || table[i]->buckets[j].empty())
+                continue;
+            ofs << "------ " << j << "\n";
+            for (u f : table[i]->buckets[j]) {
+                ofs << f << " -> ";
+            }
+            ofs << "nullptr ";
+            ofs << "overflow: ";
+            for (u f : table[i]->overflow[j]) {
+                ofs << f << " -> ";
+            }
+            ofs << "nullptr\n";
+        }
+        ofs << "===============" << i << "\n";
+    }
+
+    ofs << "Number Of Items: " << numOfItems << "\n";
+    ofs << "Expansion const: " << nextSeg << "\n";
+
+    // Always good practice to close, though destructor will do it
+    ofs.close();
+}
 
 private:
   u numOfItems;
@@ -341,34 +378,38 @@ int main() {
   //result = bfTest->bfInsert("HelloWorld");
   //result = bfTest->bfInsert("HelloWorldj");
   //bfTest->printBambooFilter();
-    size_t add_count = 1000000;
+  size_t add_count = 1000000;
 
-    cout << "Prepare..." << endl;
+  cout << "Prepare..." << endl;
 
-    vector<string> to_add, to_lookup;
-    GenerateRandom64(add_count, to_add, to_lookup);
+  vector<string> to_add, to_lookup;
+  GenerateRandom64(add_count, to_add, to_lookup);
 
-    cout << "Begin test" << endl;
+  cout << "Begin test" << endl;
 
-    BambooFilter<string> *bbf = new BambooFilter<string>(initialSegBitLength);
+  BambooFilter<string> *bbf = new BambooFilter<string>(initialSegBitLength);
 
-    auto start_time = NowNanos();
+  auto start_time = NowNanos();
 
-    for (uint64_t added = 0; added < add_count; added++)
-    {
-        bbf->bfInsert(to_add[added].c_str());
-    }
-    cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
-    bbf->printBambooFilter();
-    start_time = NowNanos();
-    for (uint64_t added = 0; added < add_count; added++)
-    {
-        if (!bbf->bfLookUp(to_add[added].c_str()))
-        {
-            throw logic_error("False Negative");
-        }
-    }
-    cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
+  for (uint64_t added = 0; added < add_count; added++)
+  {
+      bbf->bfInsert(to_add[added].c_str());
+  }
+  cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
+  bbf->printBambooFilter();
+  bbf->printBambooFilterToFile();
+  start_time = NowNanos();
+  for (uint64_t added = 0; added < add_count; added++)
+  {
+      if (!bbf->bfLookUp(to_add[added].c_str()))
+      {
+        u fingerprint, bucketIndex, segmentIndex;
+        bbf->getHashed(to_add[added].c_str(), fingerprint, bucketIndex, segmentIndex);
+        cout << fingerprint << " " << bucketIndex << " " << ((bucketIndex ^ fingerprint) & ((1 << bucketBitLength) - 1)) <<" "<< segmentIndex << "\n";
+        throw logic_error("False Negative");
+      }
+  }
+  cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
 
-    return 0;
+  return 0;
 }
