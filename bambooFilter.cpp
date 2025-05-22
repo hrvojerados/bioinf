@@ -15,7 +15,7 @@
 #define initialSegBitLength 6
 #define N0 (1 << initialSegBitLength)
 
-#define k1 (1 << (bucketBitLength))
+#define k1 (8 * 1 << (bucketBitLength))
 #define k2 (2 * bucketSize * (1 << bucketBitLength))
 
 
@@ -60,19 +60,26 @@ public:
     //printf("%x\n", hash);
     fingerprint = (hash >> (32 - fingerprintBitLength)); // mod unnecessary?
     bucketIndex = hash & ((1U << bucketBitLength) - 1);
-    segmentIndex = (hash >> bucketBitLength) & ((1U << segmentBitLength) - 1);
+    segmentIndex = (hash >> bucketBitLength) & ((1U << (segmentBitLength + 1)) - 1);
+    //printf("segmentIndex: %x bucketIndex: %x numOfSegs: %d\n", segmentIndex, bucketIndex, (1U << roundInd) * N0 + nextSeg);
     //printf("fingerptint: %x bucketIndex: %x segmentIndex: %x segmentBitLength: %d \n", fingerprint, bucketIndex, segmentIndex, segmentBitLength);
-    //if (segmentIndex >= table.size())
-    //  segmentIndex -= (1U << (segmentBitLength));
+    if (segmentIndex >= table.size())
+      segmentIndex -= (1U << (segmentBitLength));
   }
 
   bool bfInsert(T item) {
+    numOfItems++;
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
-    return bfInsertHash(fingerprint, bucketIndex, segmentIndex);
+    //printf("segmentIndex: %d\n", segmentIndex);
+    bfInsertHash(fingerprint, bucketIndex, segmentIndex);
+    //expand condition
+    if (numOfItems % k1 == 0) {
+      bfExpand();
+    }
+    return true; 
   }
-  bool bfInsertHash(u fingerprint, u bucketIndex, u segmentIndex) {
-    numOfItems++;
+  inline bool bfInsertHash(u fingerprint, u bucketIndex, u segmentIndex) {
     Segment *seg = this->table[segmentIndex];
     // check if there's room in the first bucket, if yes great :D
     list<u>::iterator it = seg->buckets[bucketIndex].begin();
@@ -83,9 +90,10 @@ public:
         return true;
       }
     }
+    //printf("chkp1\n");
     // if there's no room check the alternative bucket!
     for (int i = 1; i < maxMisses; i++) {
-      int altBucketIndex = (bucketIndex ^ fingerprint) % (1U << bucketBitLength);
+      int altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
       list<u>::iterator it = seg->buckets[altBucketIndex].begin();
       for (int j = 0; j < bucketSize; j++, it++) {
         if (it == seg->buckets[altBucketIndex].end()) {
@@ -107,11 +115,8 @@ public:
       fingerprint = newfingerprint;
       bucketIndex = altBucketIndex;
     }
+    //printf("chkp2\n");
     seg->overflow[bucketIndex].push_back(fingerprint);
-    //expand condition
-    if (numOfItems % k1 == 0) {
-      bfExpand();
-    }
 
     return true;
   }
@@ -148,7 +153,15 @@ public:
   bool bfDelete(T item) {
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
-    return bfDeleteHash(fingerprint, bucketIndex, segmentIndex);
+    if (bfDeleteHash(fingerprint, bucketIndex, segmentIndex)) {
+      numOfItems--;
+      //compress condition
+      if (numOfItems % k2 == 0) {
+        bfCompress();  
+      }
+      return true;
+    }
+    return false;
   }
 
   bool bfDeleteHash(u fingerprint, u bucketIndex, u segmentIndex) {
@@ -162,10 +175,6 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->overflow[bucketIndex].erase(it);
-        //compress condition
-        if (numOfItems % k2 == 0) {
-          bfCompress();  
-        }
         return true;
       }
     }
@@ -175,10 +184,6 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->overflow[altBucketIndex].erase(it);
-        //compress condition
-        if (numOfItems % k2 == 0) {
-          bfCompress();  
-        }
         return true;
       }
     }
@@ -188,10 +193,6 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->buckets[bucketIndex].erase(it);
-        //compress condition
-        if (numOfItems % k2 == 0) {
-          bfCompress();  
-        }
         return true;
       }
     }
@@ -200,10 +201,6 @@ public:
         it++) {
       if (*it == fingerprint) {
         seg->buckets[altBucketIndex].erase(it);
-        //compress condition
-        if (numOfItems % k2 == 0) {
-          bfCompress();  
-        }
         return true;
       }
     }
@@ -215,7 +212,7 @@ public:
     cout << "BAMBOO FILTER\n";
     cout << "Number of bits reserved for number of segments: " << segmentBitLength << "\n";
 
-    for (u i = 0; i < (1 << segmentBitLength); i++) {
+    for (u i = 0; i < table.size(); i++) {
       cout << "=============== " << i << "\n";
       for (u j = 0; j < (1 << bucketBitLength); j++) {
         if (table[i] == nullptr || table[i]->buckets[j].size() == 0)
@@ -231,8 +228,10 @@ public:
         }
         cout << "nullptr\n";
       }
-      cout << "===============\n";
+      cout << "===============" << i <<"\n";
     }
+    cout << "Number Of Items: " << numOfItems << "\n";
+    cout << "Expansion const: " << nextSeg << "\n";
   }
 
 private:
@@ -251,6 +250,7 @@ private:
   u nextSeg;
 
   void bfExpand() {
+    //printf("expand next seg: %d\n", nextSeg);
     table.push_back(new Segment());
     Segment* seg = table[nextSeg];
     
@@ -261,14 +261,14 @@ private:
       for (auto it = seg->buckets[i].begin();
           it != seg->buckets[i].end();
           it++) {
-        if ((*it >> roundInd) % 2 == 1) {
+        if ((*it >> roundInd) & 1) {
           toMoveFromBucket.push_back(it); 
         }
       }      
       for (auto it = seg->overflow[i].begin();
           it != seg->overflow[i].end();
           it++) {
-        if ((*it >> roundInd) % 2 == 1) {
+        if ((*it >> roundInd) & 1) {
           toMoveFromOverflow.push_back(it); 
         } else {
           toInsertAgain.push_back({it, i});
@@ -344,7 +344,7 @@ int main() {
   //result = bfTest->bfInsert("HelloWorld");
   //result = bfTest->bfInsert("HelloWorldj");
   //bfTest->printBambooFilter();
-    size_t add_count = 65500;
+    size_t add_count = 15000;
 
     cout << "Prepare..." << endl;
 
@@ -362,7 +362,7 @@ int main() {
         bbf->bfInsert(to_add[added].c_str());
     }
     cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
-    //bbf->printBambooFilter();
+   // bbf->printBambooFilter();
     start_time = NowNanos();
     for (uint64_t added = 0; added < add_count; added++)
     {
