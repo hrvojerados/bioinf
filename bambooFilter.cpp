@@ -165,9 +165,6 @@ public:
   }
 
   bool bfDeleteHash(u fingerprint, u bucketIndex, u segmentIndex) {
-    if (this->table[segmentIndex] == nullptr) {
-      return false;
-    }
     Segment *seg = this->table[segmentIndex];
 
     for (auto it = seg->overflow[bucketIndex].begin();
@@ -178,7 +175,7 @@ public:
         return true;
       }
     }
-    u altBucketIndex = (bucketIndex ^ fingerprint) % (1U << bucketBitLength);
+    u altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
     for (auto it = seg->overflow[altBucketIndex].begin();
         it != seg->overflow[altBucketIndex].end();
         it++) {
@@ -254,40 +251,40 @@ private:
     table.push_back(new Segment());
     Segment* seg = table[nextSeg];
     
-    vector<list<u>::iterator> toMoveFromBucket;
-    vector<list<u>::iterator> toMoveFromOverflow;
+    vector<pair<list<u>::iterator, u>> toMoveFromBucket;
+    vector<pair<list<u>::iterator, u>> toMoveFromOverflow;
     vector<pair<list<u>::iterator, u>> toInsertAgain;
     for (u i = 0; i < (1 << bucketBitLength); i++) {
       for (auto it = seg->buckets[i].begin();
           it != seg->buckets[i].end();
           it++) {
         if ((*it >> roundInd) & 1) {
-          toMoveFromBucket.push_back(it); 
+          toMoveFromBucket.push_back({it, i}); 
         }
       }      
       for (auto it = seg->overflow[i].begin();
           it != seg->overflow[i].end();
           it++) {
         if ((*it >> roundInd) & 1) {
-          toMoveFromOverflow.push_back(it); 
+          toMoveFromOverflow.push_back({it, i}); 
         } else {
           toInsertAgain.push_back({it, i});
         }
       }
-      for (auto it : toMoveFromOverflow) {
-        bfInsertHash(*it, i, table.size() - 1);
-        ///seg->overflow[i].erase(it);
-      }
-      for (auto it : toMoveFromOverflow) {
-        bfDeleteHash(*it, i, nextSeg);
-        ///seg->overflow[i].erase(it);
-      }
-      for (auto it : toMoveFromBucket) {
-        bfInsertHash(*it, i, table.size() - 1);
-      }
-      for (auto it : toMoveFromBucket) {
-        bfDeleteHash(*it, i, nextSeg);
-      }
+    }
+    for (auto [it, i] : toMoveFromOverflow) {
+      bfInsertHash(*it, i, table.size() - 1);
+      ///seg->overflow[i].erase(it);
+    }
+    for (auto [it, i] : toMoveFromOverflow) {
+      bfDeleteHash(*it, i, nextSeg);
+      ///seg->overflow[i].erase(it);
+    }
+    for (auto [it, i] : toMoveFromBucket) {
+      bfInsertHash(*it, i, table.size() - 1);
+    }
+    for (auto [it, i] : toMoveFromBucket) {
+      bfDeleteHash(*it, i, nextSeg);
     }
     for (auto [it, i] : toInsertAgain) {
       bfDeleteHash(*it, i, nextSeg);
@@ -344,7 +341,7 @@ int main() {
   //result = bfTest->bfInsert("HelloWorld");
   //result = bfTest->bfInsert("HelloWorldj");
   //bfTest->printBambooFilter();
-    size_t add_count = 15000;
+    size_t add_count = 1000000;
 
     cout << "Prepare..." << endl;
 
@@ -362,7 +359,7 @@ int main() {
         bbf->bfInsert(to_add[added].c_str());
     }
     cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
-   // bbf->printBambooFilter();
+    bbf->printBambooFilter();
     start_time = NowNanos();
     for (uint64_t added = 0; added < add_count; added++)
     {
