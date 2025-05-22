@@ -5,6 +5,7 @@
 #include <type_traits>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 #include "common/random.h"
 #include "common/timing.h"
@@ -16,7 +17,7 @@
 #define initialSegBitLength 6
 #define N0 (1 << initialSegBitLength)
 
-#define k1 (8 * 1 << (bucketBitLength))
+#define k1 (1 << (bucketBitLength))
 #define k2 (2 * bucketSize * (1 << bucketBitLength))
 
 
@@ -75,6 +76,7 @@ public:
     //printf("segmentIndex: %d\n", segmentIndex);
     bfInsertHash(fingerprint, bucketIndex, segmentIndex);
     //expand condition
+  
     if (numOfItems % k1 == 0) {
       bfExpand();
     }
@@ -215,7 +217,7 @@ public:
       for (u j = 0; j < (1 << bucketBitLength); j++) {
         if (table[i] == nullptr || table[i]->buckets[j].size() == 0)
           continue;
-        cout << "------ " << j << "\n";
+        cout << "------ " << j << " seg=" << i <<  "\n";
         for (u f : table[i]->buckets[j]) {
           cout << f << " -> ";
         }
@@ -247,7 +249,7 @@ public:
         for (u j = 0; j < (1u << bucketBitLength); j++) {
             if (table[i] == nullptr || table[i]->buckets[j].empty())
                 continue;
-            ofs << "------ " << j << "\n";
+            ofs << "------ " << j << " seg=" << i << "\n";
             for (u f : table[i]->buckets[j]) {
                 ofs << f << " -> ";
             }
@@ -284,7 +286,6 @@ private:
   u nextSeg;
 
   void bfExpand() {
-    //printf("expand next seg: %d\n", nextSeg);
     table.push_back(new Segment());
     Segment* seg = table[nextSeg];
     
@@ -310,26 +311,35 @@ private:
       }
     }
     for (auto [it, i] : toMoveFromOverflow) {
-      bfInsertHash(*it, i, table.size() - 1);
-      ///seg->overflow[i].erase(it);
-    }
-    for (auto [it, i] : toMoveFromOverflow) {
-      bfDeleteHash(*it, i, nextSeg);
-      ///seg->overflow[i].erase(it);
-    }
-    for (auto [it, i] : toMoveFromBucket) {
+      //printf("adding1 into new: %x\n", *it);
       bfInsertHash(*it, i, table.size() - 1);
     }
     for (auto [it, i] : toMoveFromBucket) {
-      bfDeleteHash(*it, i, nextSeg);
-    }
-    for (auto [it, i] : toInsertAgain) {
-      bfDeleteHash(*it, i, nextSeg);
-      //seg->overflow[i].erase(it);
+      //printf("adding2 into new: %x\n", *it);
+      bfInsertHash(*it, i, table.size() - 1);
     }
     for (auto [it, i] : toInsertAgain) { 
+      //printf("adding3 back: %x\n", *it);
       bfInsertHash(*it, i, nextSeg);
     }
+        
+    for (auto [it, i] : toMoveFromOverflow) {
+      //bfDeleteHash(*it, i, nextSeg); 
+      //printf("deleting1: %x\n", *it);
+      seg->overflow[i].erase(it);
+    }
+    for (auto [it, i] : toMoveFromBucket) {
+      //bfDeleteHash(*it, i, nextSeg);
+      //printf("deleting2: %x\n", *it);
+      seg->overflow[i].erase(it);
+    }
+    for (auto [it, i] : toInsertAgain) {
+      //bfDeleteHash(*it, i, nextSeg);
+      //printf("deleting3: %x\n", *it);
+      seg->overflow[i].erase(it);
+    }
+    
+    
 
     nextSeg++;
     if (nextSeg == (1U << roundInd) * N0){
@@ -391,21 +401,21 @@ int main() {
 
   auto start_time = NowNanos();
 
-  for (uint64_t added = 0; added < add_count; added++)
-  {
+  for (uint64_t added = 0; added < add_count; added++) {
+
       bbf->bfInsert(to_add[added].c_str());
   }
   cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
   bbf->printBambooFilter();
-  bbf->printBambooFilterToFile();
+  //bbf->printBambooFilterToFile();
   start_time = NowNanos();
   for (uint64_t added = 0; added < add_count; added++)
   {
       if (!bbf->bfLookUp(to_add[added].c_str()))
       {
         u fingerprint, bucketIndex, segmentIndex;
-        bbf->getHashed(to_add[added].c_str(), fingerprint, bucketIndex, segmentIndex);
-        cout << fingerprint << " " << bucketIndex << " " << ((bucketIndex ^ fingerprint) & ((1 << bucketBitLength) - 1)) <<" "<< segmentIndex << "\n";
+        //bbf->getHashed(to_add[added].c_str(), fingerprint, bucketIndex, segmentIndex);
+        //cout << fingerprint << " " << bucketIndex << " " << ((bucketIndex ^ fingerprint) & ((1 << bucketBitLength) - 1)) <<" "<< segmentIndex << "\n";
         throw logic_error("False Negative");
       }
   }
