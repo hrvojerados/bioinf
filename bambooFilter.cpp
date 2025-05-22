@@ -15,7 +15,7 @@
 #define initialSegBitLength 6
 #define N0 (1 << initialSegBitLength)
 
-#define k1 (8 * 1 << (bucketBitLength))
+#define k1 (1 << (bucketBitLength))
 #define k2 (2 * bucketSize * (1 << bucketBitLength))
 
 
