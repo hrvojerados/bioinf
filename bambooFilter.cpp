@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <iostream>
+#include <sys/types.h>
 #include <type_traits>
 #include <fstream>
 #include <iostream>
@@ -9,7 +10,7 @@
 
 #include "common/random.h"
 #include "common/timing.h"
-
+#include "common/BOBHash.h"
 #define bucketSize 4
 #define bucketBitLength 10
 #define fingerprintBitLength 16
@@ -17,13 +18,15 @@
 #define initialSegBitLength 6
 #define N0 (1 << initialSegBitLength)
 
-#define k1 (1 << (bucketBitLength))
+#define	FORCE_INLINE inline __attribute__((always_inline))
+//#define k1 5
+#define k1 (1 << (bucketBitLength - 1))
 #define k2 (2 * bucketSize * (1 << bucketBitLength))
 
 
 using namespace std;
 using ull = unsigned long long;
-using u = unsigned int; 
+using u = u_int32_t; 
 
 class Segment {
 public:
@@ -36,11 +39,11 @@ public:
   ~Segment() = default;
 };
 
-template <typename T> class BambooFilter {
+class BambooFilter {
 public:
   vector<Segment*> table;
 
-  BambooFilter<T>(size_t segmentBitLength) 
+  BambooFilter(size_t segmentBitLength) 
     : table(1U << segmentBitLength, nullptr),
     segmentBitLength(segmentBitLength),
     numOfItems(0),
@@ -51,10 +54,12 @@ public:
       }
     };
   
-  inline void getHashed(T item, u &fingerprint, u &bucketIndex, u &segmentIndex) {
+  FORCE_INLINE void getHashed(const char* item, u &fingerprint, u &bucketIndex, u &segmentIndex) const {
+    const u hash = BOBHash::run(item, strlen(item), 3);
+    /* 
     const hash<T> h;
     u hash = h(item);
-    /*
+    
     fingerprint = (hash >> (32 - fingerprintBitLength));
     bucketIndex = hash & ((1L< bucketBitLength) - 1);
     segmentIndex = (hash >> bucketBitLength) & ((1U<< (segmentBitLength + 1)) - 1);
@@ -69,7 +74,7 @@ public:
       segmentIndex -= (1U << (segmentBitLength));
   }
 
-  bool bfInsert(T item) {
+  bool bfInsert(const char* item) {
     numOfItems++;
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
@@ -82,7 +87,7 @@ public:
     }
     return true; 
   }
-  inline bool bfInsertHash(u fingerprint, u bucketIndex, u segmentIndex) {
+  FORCE_INLINE bool bfInsertHash(u fingerprint, u bucketIndex, u segmentIndex) {
     Segment *seg = this->table[segmentIndex];
     // check if there's room in the first bucket, if yes great :D
     list<u>::iterator it = seg->buckets[bucketIndex].begin();
@@ -123,7 +128,7 @@ public:
 
     return true;
   }
-  inline bool bfLookUp(T item) {
+  FORCE_INLINE bool bfLookUp(const char* item) {
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
 
@@ -135,7 +140,7 @@ public:
       }
     }
 
-    int altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
+    const u altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
     for (u f : seg->buckets[altBucketIndex]) {
       if (f == fingerprint) {
         return true;
@@ -153,7 +158,7 @@ public:
     return false;
   }
   
-  bool bfDelete(T item) {
+  bool bfDelete(const char* item) {
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
     if (bfDeleteHash(fingerprint, bucketIndex, segmentIndex)) {
@@ -167,11 +172,11 @@ public:
     return false;
   }
 
-  bool bfDeleteHash(u fingerprint, u bucketIndex, u segmentIndex) {
+  FORCE_INLINE bool bfDeleteHash(u fingerprint, u bucketIndex, u segmentIndex) {
     Segment *seg = this->table[segmentIndex];
 
     for (auto it = seg->overflow[bucketIndex].begin();
-        it != seg->overflow[bucketIndex].end();
+      it != seg->overflow[bucketIndex].end();
         it++) {
       if (*it == fingerprint) {
         seg->overflow[bucketIndex].erase(it);
@@ -266,7 +271,6 @@ public:
     ofs << "Number Of Items: " << numOfItems << "\n";
     ofs << "Expansion const: " << nextSeg << "\n";
 
-    // Always good practice to close, though destructor will do it
     ofs.close();
 }
 
@@ -285,7 +289,7 @@ private:
   //next index to be split
   u nextSeg;
 
-  void bfExpand() {
+  inline void bfExpand() {
     table.push_back(new Segment());
     Segment* seg = table[nextSeg];
     
@@ -318,10 +322,6 @@ private:
       //printf("adding2 into new: %x\n", *it);
       bfInsertHash(*it, i, table.size() - 1);
     }
-    for (auto [it, i] : toInsertAgain) { 
-      //printf("adding3 back: %x\n", *it);
-      bfInsertHash(*it, i, nextSeg);
-    }
         
     for (auto [it, i] : toMoveFromOverflow) {
       //bfDeleteHash(*it, i, nextSeg); 
@@ -333,10 +333,16 @@ private:
       //printf("deleting2: %x\n", *it);
       seg->overflow[i].erase(it);
     }
+    vector<pair<u, u>> tmp;
     for (auto [it, i] : toInsertAgain) {
       //bfDeleteHash(*it, i, nextSeg);
       //printf("deleting3: %x\n", *it);
+      tmp.push_back({*it, i});
       seg->overflow[i].erase(it);
+    }
+    for (auto [item, i] : tmp) { 
+      //printf("adding3 back: %x\n", *it);
+      bfInsertHash(item, i, nextSeg);
     }
     
     
@@ -349,7 +355,7 @@ private:
     }
     return;
   }
-  void bfCompress() {
+  inline void bfCompress() {
     if (table.size() == N0) {
       return;
     }
@@ -381,7 +387,7 @@ private:
 
 };
 int main() {
-  BambooFilter<string> *bfTest = new BambooFilter<string>(4);
+  BambooFilter *bfTest = new BambooFilter(initialSegBitLength);
   bool result;
   //for (ull i = 0; i < 1e2; i++)
   //  result = bfTest->bfInsert("HelloWorldi");
@@ -397,7 +403,7 @@ int main() {
 
   cout << "Begin test" << endl;
 
-  BambooFilter<string> *bbf = new BambooFilter<string>(initialSegBitLength);
+  BambooFilter *bbf = new BambooFilter(initialSegBitLength);
 
   auto start_time = NowNanos();
 
@@ -406,7 +412,7 @@ int main() {
       bbf->bfInsert(to_add[added].c_str());
   }
   cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
-  bbf->printBambooFilter();
+  //bbf->printBambooFilter();
   //bbf->printBambooFilterToFile();
   start_time = NowNanos();
   for (uint64_t added = 0; added < add_count; added++)
