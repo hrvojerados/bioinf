@@ -113,7 +113,6 @@ public:
       fingerprint = newfingerprint;
       bucketIndex = altBucketIndex;
     }
-    //printf("chkp2\n");
     seg->overflow[bucketIndex].push_back(fingerprint);
     return true;
   }
@@ -191,6 +190,18 @@ public:
         return true;
       }
     }
+    
+    /* If slow/incorrect try this instead
+    seg->buckets[bucketIndex].erase(
+        remove_if(
+          seg->buckets[bucketIndex].begin(),
+          seg->buckets[bucketIndex].end(),
+          [&](const u& x) {
+            if (x == fingerprint) return true;
+            return false;
+          }),
+        seg->buckets[bucketIndex].end());
+    */
     u altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
     for (auto it = seg->overflow[altBucketIndex].begin();
         it != seg->overflow[altBucketIndex].end();
@@ -200,6 +211,17 @@ public:
         return true;
       }
     }
+    /* If slow/incorrect try this instead
+    seg->buckets[altBucketIndex].erase(
+        remove_if(
+          seg->buckets[altBucketIndex].begin(),
+          seg->buckets[altBucketIndex].end(),
+          [&](const u& x) {
+            if (x == fingerprint) return true;
+            return false;
+          }),
+        seg->buckets[altBucketIndex].end());
+    */
 
     for (auto it = seg->buckets[bucketIndex].begin();
         it != seg->buckets[bucketIndex].end();
@@ -406,7 +428,7 @@ int main() {
   //result = bfTest->bfInsert("HelloWorld");
   //result = bfTest->bfInsert("HelloWorldj");
   //bfTest->printBambooFilter();
-  size_t add_count = 100000;
+  size_t add_count = 1000000;
 
   cout << "Prepare..." << endl;
 
