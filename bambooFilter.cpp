@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
+#include <boost/container/small_vector.hpp>
 
 #include "common/random.h"
 #include "common/timing.h"
@@ -27,12 +28,13 @@
 using namespace std;
 using ull = unsigned long long;
 using u = u_int32_t; 
+using SmallVec = boost::container::small_vector<u, 4>;
 
 class Segment {
 public:
 //  ul numOfOverflownBuckets;
 //  ul numOfElements;
-  list<u> buckets[1U << bucketBitLength]; 
+  SmallVec buckets[1U << bucketBitLength]; 
   list<u> overflow[1U << bucketBitLength];
 //  Segment() : numOfOverflownBuckets(0), numOfElements(0) {};
   Segment() = default;
@@ -90,42 +92,29 @@ public:
   FORCE_INLINE bool bfInsertHash(u fingerprint, u bucketIndex, u segmentIndex) {
     Segment *seg = this->table[segmentIndex];
     // check if there's room in the first bucket, if yes great :D
-    list<u>::iterator it = seg->buckets[bucketIndex].begin();
-    for (int i = 0; i < bucketSize; i++, it++) {
-      if (it == seg->buckets[bucketIndex].end()) {
+    if (seg->buckets[bucketIndex].size() < 4) {
         seg->buckets[bucketIndex].push_back(fingerprint);
-        //if we have too many overflown segments (condition) then we have to expand the table
         return true;
-      }
-    }
-    //printf("chkp1\n");
+    } 
     // if there's no room check the alternative bucket!
     for (int i = 1; i < maxMisses; i++) {
       int altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
-      list<u>::iterator it = seg->buckets[altBucketIndex].begin();
-      for (int j = 0; j < bucketSize; j++, it++) {
-        if (it == seg->buckets[altBucketIndex].end()) {
+      if (seg->buckets[altBucketIndex].size() < 4) {
           seg->buckets[altBucketIndex].push_back(fingerprint);
           return true;
-        }
-      }
+      } 
       // if there's no space in the alternative bucket, place it somwhere almost random anyway
       // take the fingerprint that was there before and save it like it's new
       // fingerprint altbucket is now the main bucket (one that we already checked)
       // new alt bucket is calculated in the next loop iteration
-      int rnd = fingerprint >> (fingerprintBitLength - 2);
-      u newfingerprint;
-
-      it = seg->buckets[altBucketIndex].begin();
-      for ( int i = 0; i<rnd; i++, it++);
-      newfingerprint = *it;
-      *it = fingerprint;
+      u rnd = fingerprint >> (fingerprintBitLength - 2);
+      u newfingerprint = seg->buckets[altBucketIndex][rnd];
+      seg->buckets[altBucketIndex][rnd] = fingerprint;
       fingerprint = newfingerprint;
       bucketIndex = altBucketIndex;
     }
     //printf("chkp2\n");
     seg->overflow[bucketIndex].push_back(fingerprint);
-
     return true;
   }
   FORCE_INLINE bool bfLookUp(const char* item) {
@@ -134,26 +123,45 @@ public:
 
     Segment *seg = this->table[segmentIndex];
 
+    //__builtin_prefetch(seg->buckets[bucketIndex].data(), 0, 1);
     for (u f : seg->buckets[bucketIndex]) {
       if (f == fingerprint) {
         return true;
       }
     }
-
-    const u altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
+    /* playing around with efficiency
+    if (find(
+          seg->buckets[bucketIndex].begin(),
+          seg->buckets[bucketIndex].end(),
+          fingerprint) != seg->buckets[bucketIndex].end()) {
+      return true;
+    }
+        
+    if (find(
+          seg->buckets[altBucketIndex].begin(),
+          seg->buckets[altBucketIndex].end(),
+          fingerprint) != seg->buckets[altBucketIndex].end()) {
+      return true;
+    }
+    */
+    constexpr u bitMask = (1U << bucketBitLength) - 1;
+    const u altBucketIndex = (bucketIndex ^ fingerprint) & bitMask;
     for (u f : seg->buckets[altBucketIndex]) {
       if (f == fingerprint) {
         return true;
       }
     }
-
-    for (u f : seg->overflow[bucketIndex]) {
-      if (f == fingerprint)
-        return true;
+    if (find(
+          seg->overflow[bucketIndex].begin(),
+          seg->overflow[bucketIndex].end(),
+          fingerprint) != seg->overflow[bucketIndex].end()) {
+      return true;
     }
-    for (u f : seg->overflow[altBucketIndex]) {
-      if (f == fingerprint)
-        return true;
+    if (find(
+          seg->overflow[altBucketIndex].begin(),
+          seg->overflow[altBucketIndex].end(),
+          fingerprint) != seg->overflow[altBucketIndex].end()) {
+      return true;
     }
     return false;
   }
@@ -290,58 +298,60 @@ private:
   u nextSeg;
 
   inline void bfExpand() {
+    //printf("start\n");
     table.push_back(new Segment());
     Segment* seg = table[nextSeg];
     
-    vector<pair<list<u>::iterator, u>> toMoveFromBucket;
+    vector<pair<u, u>> toMoveFromBucket;
     vector<pair<list<u>::iterator, u>> toMoveFromOverflow;
     vector<pair<list<u>::iterator, u>> toInsertAgain;
-    for (u i = 0; i < (1 << bucketBitLength); i++) {
-      for (auto it = seg->buckets[i].begin();
-          it != seg->buckets[i].end();
-          it++) {
-        if ((*it >> roundInd) & 1) {
-          toMoveFromBucket.push_back({it, i}); 
+    for (u bi = 0; bi < (1 << bucketBitLength); bi++) {
+      for (u j = 0;
+          j < seg->buckets[bi].size();
+          j++) {
+        if ((seg->buckets[bi][j] >> roundInd) & 1) {
+          toMoveFromBucket.push_back({seg->buckets[bi][j], bi}); 
         }
       }      
-      for (auto it = seg->overflow[i].begin();
-          it != seg->overflow[i].end();
+      for (auto it = seg->overflow[bi].begin();
+          it != seg->overflow[bi].end();
           it++) {
         if ((*it >> roundInd) & 1) {
-          toMoveFromOverflow.push_back({it, i}); 
+          toMoveFromOverflow.push_back({it, bi}); 
         } else {
-          toInsertAgain.push_back({it, i});
+          toInsertAgain.push_back({it, bi});
         }
       }
     }
     for (auto [it, i] : toMoveFromOverflow) {
-      //printf("adding1 into new: %x\n", *it);
       bfInsertHash(*it, i, table.size() - 1);
     }
-    for (auto [it, i] : toMoveFromBucket) {
-      //printf("adding2 into new: %x\n", *it);
-      bfInsertHash(*it, i, table.size() - 1);
+    for (auto [val, i] : toMoveFromBucket) {
+      bfInsertHash(val, i, table.size() - 1);
     }
         
     for (auto [it, i] : toMoveFromOverflow) {
-      //bfDeleteHash(*it, i, nextSeg); 
-      //printf("deleting1: %x\n", *it);
       seg->overflow[i].erase(it);
     }
-    for (auto [it, i] : toMoveFromBucket) {
-      //bfDeleteHash(*it, i, nextSeg);
-      //printf("deleting2: %x\n", *it);
-      seg->overflow[i].erase(it);
+
+    for (auto [val, bi] : toMoveFromBucket) {
+      u tmp = val;
+      seg->buckets[bi].erase(
+          remove_if(
+            seg->buckets[bi].begin(),
+            seg->buckets[bi].end(),
+            [&](const u& x) {
+              if (x == tmp) return true;
+              return false;
+            }),
+          seg->buckets[bi].end());
     }
     vector<pair<u, u>> tmp;
     for (auto [it, i] : toInsertAgain) {
-      //bfDeleteHash(*it, i, nextSeg);
-      //printf("deleting3: %x\n", *it);
       tmp.push_back({*it, i});
       seg->overflow[i].erase(it);
     }
     for (auto [item, i] : tmp) { 
-      //printf("adding3 back: %x\n", *it);
       bfInsertHash(item, i, nextSeg);
     }
     
@@ -353,6 +363,8 @@ private:
       roundInd++;
       nextSeg = 0;
     }
+
+    //printf("end\n");
     return;
   }
   inline void bfCompress() {
@@ -394,7 +406,7 @@ int main() {
   //result = bfTest->bfInsert("HelloWorld");
   //result = bfTest->bfInsert("HelloWorldj");
   //bfTest->printBambooFilter();
-  size_t add_count = 1000000;
+  size_t add_count = 100000;
 
   cout << "Prepare..." << endl;
 
@@ -415,6 +427,7 @@ int main() {
   //bbf->printBambooFilter();
   //bbf->printBambooFilterToFile();
   start_time = NowNanos();
+
   for (uint64_t added = 0; added < add_count; added++)
   {
       if (!bbf->bfLookUp(to_add[added].c_str()))
@@ -426,6 +439,9 @@ int main() {
       }
   }
   cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
+  
+  for (int i = 0; i < 500; i++) {
 
+  }
   return 0;
 }
