@@ -2,12 +2,14 @@
 #include <cstddef>
 #include <cstdio>
 #include <iostream>
+#include <string>
 #include <sys/types.h>
 #include <type_traits>
 #include <fstream>
 #include <iostream>
 #include <vector>
 #include <boost/container/small_vector.hpp>
+#include <random>
 
 #include "common/random.h"
 #include "common/timing.h"
@@ -21,7 +23,7 @@
 
 #define	FORCE_INLINE inline __attribute__((always_inline))
 //#define k1 5
-#define k1 (1 << (bucketBitLength - 1))
+#define k1 (1 << (bucketBitLength))
 #define k2 (2 * bucketSize * (1 << bucketBitLength))
 
 
@@ -420,14 +422,10 @@ private:
   }
 
 };
-int main() {
+
+void test1() {
   BambooFilter *bfTest = new BambooFilter(initialSegBitLength);
   bool result;
-  //for (ull i = 0; i < 1e2; i++)
-  //  result = bfTest->bfInsert("HelloWorldi");
-  //result = bfTest->bfInsert("HelloWorld");
-  //result = bfTest->bfInsert("HelloWorldj");
-  //bfTest->printBambooFilter();
   size_t add_count = 1000000;
 
   cout << "Prepare..." << endl;
@@ -446,8 +444,6 @@ int main() {
       bbf->bfInsert(to_add[added].c_str());
   }
   cout << ((add_count * 1000.0) / static_cast<double>(NowNanos() - start_time)) << endl;
-  //bbf->printBambooFilter();
-  //bbf->printBambooFilterToFile();
   start_time = NowNanos();
 
   for (uint64_t added = 0; added < add_count; added++)
@@ -455,8 +451,6 @@ int main() {
       if (!bbf->bfLookUp(to_add[added].c_str()))
       {
         u fingerprint, bucketIndex, segmentIndex;
-        //bbf->getHashed(to_add[added].c_str(), fingerprint, bucketIndex, segmentIndex);
-        //cout << fingerprint << " " << bucketIndex << " " << ((bucketIndex ^ fingerprint) & ((1 << bucketBitLength) - 1)) <<" "<< segmentIndex << "\n";
         throw logic_error("False Negative");
       }
   }
@@ -465,5 +459,61 @@ int main() {
   for (int i = 0; i < 500; i++) {
 
   }
+  delete bbf;
+}
+
+void test2(string pathToGenome, u k, u numOfAdditions) {
+  ifstream file(pathToGenome);
+  string header;
+  getline(file, header);
+
+  string line;
+  string oversizedWindow = "";
+  vector<string> kMers; 
+  while (getline(file, line)) {
+    oversizedWindow += line;
+    if (oversizedWindow.length() < k)
+      continue;
+    kMers.push_back(oversizedWindow.substr(0, k));
+    oversizedWindow.erase(0, 1);
+  }
+  const string bases = "ATGC";
+  random_device rd;
+  mt19937 gen(rd());
+  uniform_int_distribution<> dist(0, 3);
+  
+  vector<string> randomKmers;
+  for (int i = 0; i < numOfAdditions; i++) {
+    string kMer = "";
+    for (int j = 0; j < k; j++) {
+      kMer += bases[dist(gen)]; 
+    }
+    randomKmers.push_back(kMer);
+  } 
+
+  BambooFilter* bf = new BambooFilter(initialSegBitLength);
+  cout << "Insert rate: ";
+  auto start_time = NowNanos();
+  for (auto itm : kMers) {
+    bf->bfInsert(itm.c_str());
+  }
+  cout << ((kMers.size() * 1000.0) / static_cast<double>(NowNanos() - start_time)) << "\n";
+  int positive = 0;
+  int negative = 0;
+  cout << "Lookup rate: ";
+  start_time = NowNanos();
+  for (auto itm : randomKmers) {
+    if (bf->bfLookUp(itm.c_str())) positive++;
+    else negative++;
+  }
+  cout << ((randomKmers.size() * 1000.0) / static_cast<double>(NowNanos() - start_time)) << "\n";
+  cout << "positives: " << positive << "\n";
+  cout << "negatives: " << negative << "\n";
+
+  delete bf;
+}
+int main() {
+  //test1();
+  test2("data/GCF_000005845.2/GCF_000005845.2_ASM584v2_genomic.fna", 200, 100000);
   return 0;
 }
