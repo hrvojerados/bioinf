@@ -7,10 +7,11 @@
 #include "../common/BOBHash.h"
 #include "../src/bambooFilter.hpp"
 
-int main() {
+int main(int argc, char* argv[]) {
+
   BambooFilter *bfTest = new BambooFilter(initialSegBitLength);
   bool result;
-  size_t add_count = 1000000;
+  size_t add_count = stoi(argv[1]);
   ofstream out("output/test1.txt");
 
   out << "Prepare..." << endl;

@@ -1,4 +1,4 @@
-Insert rate: 9.12678
-Lookup rate: 12.2911
-positives: 5053
-negatives: 94947
+Insert rate: 8.68327
+Lookup rate: 13.264
+positives: 51927
+negatives: 948073

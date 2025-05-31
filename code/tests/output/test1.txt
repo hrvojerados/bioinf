@@ -1,4 +1,6 @@
 Prepare...
 Begin test
-8.70505
-9.98542
+Insertion rate:
+9.45653
+Lookup rate:
+10.6988
