@@ -34,6 +34,10 @@ using ull = unsigned long long;
 using u = u_int32_t; 
 using SmallVec = boost::container::small_vector<u, 4>;
 
+//Segment contains a number of buckets and corresponding buckets of overflow segment. 
+//Although it mimics the purpose of cuckoo filters, it has no methods, and instead the methods
+//are implemented as a part of Bamboo filter class
+
 class Segment {
 public:
   SmallVec buckets[1U << bucketBitLength]; 
@@ -41,6 +45,9 @@ public:
   Segment() = default;
   ~Segment() = default;
 };
+
+//Bamboo filter is a class which consists of a vector of Segments and implements five main functionalities:
+//bfInsert, bfLookup, bfDelete, bfExpand and bfCompress
 
 class BambooFilter {
 public:
@@ -56,7 +63,8 @@ public:
         table[i] = new Segment();
       }
     };
-  
+  // Calculating hash and dividing it into three parts is often used part of the code,
+  // therefore it is made to be an inline function for both the ease of use and speed of execution
   FORCE_INLINE void getHashed(const char* item, u &fingerprint, u &bucketIndex, u &segmentIndex) const {
     const u hash = BOBHash::run(item, strlen(item), 3);
     fingerprint = (hash >> (32 - fingerprintBitLength)); // mod unnecessary?
@@ -65,26 +73,29 @@ public:
     if (segmentIndex >= table.size())
       segmentIndex -= (1U << (segmentBitLength));
   }
-
+  // Insert takes an item as an argument and inserts it into the given Bamboo filter
   bool bfInsert(const char* item) {
     numOfItems++;
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
     bfInsertHash(fingerprint, bucketIndex, segmentIndex);
-    //expand condition  
+    //if expand condition is met, bfInsert calls bfExpand function
     if (numOfItems % k1 == 0) {
       bfExpand();
     }
     return true; 
   }
+
+  //bfInsertHash is an inline function used both by bfInsert and bfExpand functions
+  //which implements the clasic cuckoo filter method of insertion into the chosen segment
   FORCE_INLINE bool bfInsertHash(u fingerprint, u bucketIndex, u segmentIndex) {
     Segment *seg = this->table[segmentIndex];
-    // check if there's room in the first bucket, if yes great :D
+    // check if there's room in the first bucket, if yes insert it
     if (seg->buckets[bucketIndex].size() < 4) {
         seg->buckets[bucketIndex].push_back(fingerprint);
         return true;
     } 
-    // if there's no room check the alternative bucket!
+    // if there's no room check the alternative bucket
     for (int i = 1; i < maxMisses; i++) {
       int altBucketIndex = (bucketIndex ^ fingerprint) & ((1U << bucketBitLength) - 1);
       if (seg->buckets[altBucketIndex].size() < 4) {
@@ -95,6 +106,7 @@ public:
       // take the fingerprint that was there before and save it like it's new
       // fingerprint altbucket is now the main bucket (one that we already checked)
       // new alt bucket is calculated in the next loop iteration
+      
       u rnd = fingerprint >> (fingerprintBitLength - 2);
       u newfingerprint = seg->buckets[altBucketIndex][rnd];
       seg->buckets[altBucketIndex][rnd] = fingerprint;
@@ -104,6 +116,10 @@ public:
     seg->overflow[bucketIndex].push_back(fingerprint);
     return true;
   }
+
+  //bfLookup is a function which checks if given element is in a Bamboo filter by 
+  //checking two possible locations in the chosen segment
+  //if a matching fingerprint is found, return true, otherwise return false
   FORCE_INLINE bool bfLookUp(const char* item) {
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
@@ -137,13 +153,15 @@ public:
     }
     return false;
   }
-  
+
+  //bfDelete is a function which searches for a matching fingerprint already in the filter at expected locations
+  //and deletes it if it is found, prioritizing deletion from overflow segment as opposed to the regular one
   bool bfDelete(const char* item) {
     u fingerprint, bucketIndex, segmentIndex;
     getHashed(item, fingerprint, bucketIndex, segmentIndex);
     if (bfDeleteHash(fingerprint, bucketIndex, segmentIndex)) {
       numOfItems--;
-      //compress condition
+      //if compress condition is met, call bfCompress function
       if (numOfItems % k2 == 0) {
         bfCompress();  
       }
@@ -151,7 +169,7 @@ public:
     }
     return false;
   }
-
+  //bfDeleteHash implements the functionality of bfDelete with selected fingerprint, bucket index and segment index
   FORCE_INLINE bool bfDeleteHash(u fingerprint, u bucketIndex, u segmentIndex) {
     Segment *seg = this->table[segmentIndex];
 
@@ -193,7 +211,7 @@ public:
     
     return false;
   }
-
+  //function printBambooFilter prints the contents of the bamboo filter in a readable way, skipping empty buckets
   void printBambooFilter() {
     cout << "BAMBOO FILTER\n";
     cout << "Number of bits reserved for number of segments: " << segmentBitLength << "\n";
@@ -219,6 +237,8 @@ public:
     cout << "Number Of Items: " << numOfItems << "\n";
     cout << "Expansion const: " << nextSeg << "\n";
   }
+
+  //Prints the bamboo filter to a file instead of to a standard output
   void printBambooFilterToFile(const string& filename = "output.txt") {
     ofstream ofs(filename);
     if (!ofs) {
@@ -257,21 +277,18 @@ public:
 
 private:
   u numOfItems;
-  u segmentBitLength; 
   //bits (of the hash) reserved for segment enumeration
-  // number of segments that have at least one item's fingerprint stored in it's overflow part
-  // used for determining whether to expand the bamboo filter 
-  //ul numOfOverflownSegs; 
-  //number of empty segments (have no fingerprints stored inside)
-  // used for determining whether to compress the bamboo filter 
-  //ul numOfEmptySegs;
-  //round of expansion
+  u segmentBitLength; 
+  //index of the round of expansion
   u roundInd;
-  //next index to be split
+  //index of the next segment to be split
   u nextSeg;
 
+  //bfExpand method expands the Bamboo filter by adding new segments and moving a portion of 
+  //contents of the segment to-be-expanded to the new segment
+  //If a round of expansions is finished, increase round index by one
+
   inline void bfExpand() {
-    //printf("start\n");
     table.push_back(new Segment());
     Segment* seg = table[nextSeg];
     
@@ -339,6 +356,9 @@ private:
 
     return;
   }
+
+  //bfCompress is the inverse method of the bfExpand method, instead merging two segments, 
+  //deleting the unnecessary one and if needed decreasing the round index by one
   inline void bfCompress() {
     if (table.size() == N0) {
       return;
