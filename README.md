@@ -9,3 +9,6 @@ We used "small_vector" data structure from Boost library.
 We used *E. coli* genome for generating test cases from: https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000005845.2/
 
 This software is open for others to use as per MIT license.
+
+## Compilation
+in folder "code" run ```make```
