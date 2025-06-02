@@ -6,4 +6,6 @@ We used a hash function called "BOBHash" implemented on: https://github.com/wang
 
 We used "small_vector" data structure from Boost library.
 
+We used *E. coli* genome for generating test cases from: https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000005845.2/
+
 This software is open for others to use as per MIT license.
